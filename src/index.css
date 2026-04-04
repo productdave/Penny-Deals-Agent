@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #131313;
+  --color-surface: #131313;
+  --color-surface-container-lowest: #0e0e0e;
+  --color-surface-container-low: #1c1b1b;
+  --color-surface-container: #201f1f;
+  --color-surface-container-high: #2a2a2a;
+  --color-surface-container-highest: #353534;
+  --color-surface-variant: #353534;
+  --color-primary: #e9c349;
+  --color-on-primary: #3c2f00;
+  --color-primary-container: #271d00;
+  --color-on-primary-container: #a38300;
+  --color-secondary: #bcc8d6;
+  --color-on-secondary: #26313d;
+  --color-secondary-container: #3f4a56;
+  --color-on-secondary-container: #aeb9c8;
+  --color-error: #ffb4ab;
+  --color-on-error: #690005;
+  --color-on-surface: #e5e2e1;
+  --color-on-surface-variant: #c4c6cf;
+  --color-outline: #8e9198;
+  --color-outline-variant: #43474e;
+
+  --font-headline: "Noto Serif", serif;
+  --font-body: "Inter", sans-serif;
+  --font-label: "Inter", sans-serif;
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+}
+
+@layer utilities {
+  .gold-gradient {
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-on-primary-container) 100%);
+  }
+  .chat-scroll::-webkit-scrollbar {
+    width: 4px;
+  }
+  .chat-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .chat-scroll::-webkit-scrollbar-thumb {
+    background: var(--color-surface-container-high);
+  }
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-on-surface);
+  font-family: var(--font-body);
+}
