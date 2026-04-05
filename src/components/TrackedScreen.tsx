@@ -1,9 +1,32 @@
 import { BellRing, Bell, Trash2, ExternalLink, SlidersHorizontal, TrendingUp, Plus } from 'lucide-react';
+import { useState } from 'react';
 import { TrackedItem } from '../types';
+
+function ItemImage({ src, alt }: { src: string; alt: string }) {
+  const [failed, setFailed] = useState(!src);
+  const initial = alt?.charAt(0).toUpperCase() ?? '?';
+
+  if (failed) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-surface-container-highest">
+        <span className="font-headline text-6xl font-black text-primary/30 select-none">{initial}</span>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      onError={() => setFailed(true)}
+      className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-700"
+    />
+  );
+}
 
 interface TrackedScreenProps {
   items: TrackedItem[];
-  onSelectItem: () => void;
+  onSelectItem: (item: TrackedItem) => void;
 }
 
 const getBadgeStyle = (status: string) => {
@@ -38,8 +61,8 @@ export function TrackedScreen({ items, onSelectItem }: TrackedScreenProps) {
       <div className="grid grid-cols-1 gap-6">
         {items.map(item => (
           <article key={item.id} className="bg-surface-container-low group flex flex-col md:flex-row relative overflow-hidden transition-all duration-500 hover:bg-surface-container-high">
-            <div className="w-full md:w-64 h-64 md:h-auto bg-surface-container-highest overflow-hidden cursor-pointer shrink-0" onClick={onSelectItem}>
-              <img src={item.image} alt={item.name} className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-700" />
+            <div className="w-full md:w-64 h-64 md:h-auto bg-surface-container-highest overflow-hidden cursor-pointer shrink-0" onClick={() => onSelectItem(item)}>
+              <ItemImage src={item.image} alt={item.name} />
             </div>
             <div className="flex-1 p-8 flex flex-col justify-between overflow-hidden">
               <div className="flex justify-between items-start gap-4">
@@ -50,7 +73,7 @@ export function TrackedScreen({ items, onSelectItem }: TrackedScreenProps) {
                     </span>
                     <span className="text-on-surface-variant text-[10px] uppercase tracking-widest font-medium whitespace-nowrap">{item.updatedAt}</span>
                   </div>
-                  <h2 className="font-headline text-2xl font-bold text-on-surface cursor-pointer hover:text-primary transition-colors truncate" onClick={onSelectItem}>{item.name}</h2>
+                  <h2 className="font-headline text-2xl font-bold text-on-surface cursor-pointer hover:text-primary transition-colors truncate" onClick={() => onSelectItem(item)}>{item.name}</h2>
                   <p className="text-on-surface-variant text-sm mt-1 max-w-md truncate">{item.description}</p>
                 </div>
                 <div className="flex gap-2 shrink-0">
