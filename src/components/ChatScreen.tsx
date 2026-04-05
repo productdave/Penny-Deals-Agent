@@ -4,6 +4,11 @@ import ReactMarkdown from 'react-markdown';
 import { TrackedItem, Message, ChatFlowState, PennyResponse } from '../types';
 import { resolveTargetSpec, buildTrackedItemFromSpec } from '../targetSpec';
 
+export interface ChatSeedPayload {
+  id: string;
+  text: string;
+}
+
 interface ChatScreenProps {
   messages: Message[];
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
@@ -13,6 +18,8 @@ interface ChatScreenProps {
   setPendingTargetPrice: React.Dispatch<React.SetStateAction<number>>;
   onTrackItem: (item: TrackedItem) => void;
   sessionId: string | null;
+  chatSeed?: ChatSeedPayload | null;
+  onChatSeedConsumed?: () => void;
 }
 
 function isURL(text: string) {
@@ -133,10 +140,14 @@ export function ChatScreen({
   flowState, setFlowState,
   pendingTargetPrice, setPendingTargetPrice,
   onTrackItem, sessionId,
+  chatSeed,
+  onChatSeedConsumed,
 }: ChatScreenProps) {
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<Message[]>(messages);
+  messagesRef.current = messages;
 
   const flowRef = useRef(flowState);
   const priceRef = useRef(pendingTargetPrice);
@@ -160,6 +171,87 @@ export function ChatScreen({
 
   const addMessage = (msg: Omit<Message, 'id'>) =>
     setMessages(prev => [...prev, { ...msg, id: Date.now().toString() + Math.random() }]);
+
+  async function runPennyExchange(conversation: Message[], userTextForSpec: string) {
+    const currentFlow = flowRef.current;
+    const history = toOpenAIMessages(conversation);
+
+    const res = await fetch('/api/chat/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history, sessionId }),
+    });
+
+    if (!res.ok) throw new Error('API error');
+
+    const data = await res.json();
+    const { reply, reasoning, conclusion, confidence, next_steps, productName, flowAction, target } = data;
+
+    if (productName) pendingProductRef.current.name = productName;
+
+    const pennyResponse: PennyResponse = { reasoning, conclusion, confidence, next_steps };
+    addMessage({ sender: 'PENNY', text: reply, pennyResponse });
+
+    const refGuess =
+      pendingProductRef.current.scrapedPrice && pendingProductRef.current.scrapedPrice > 0
+        ? pendingProductRef.current.scrapedPrice
+        : 0;
+    const spec = resolveTargetSpec(target, userTextForSpec, refGuess);
+
+    if (spec?.kind === 'absolute') {
+      setPendingTargetPrice(spec.amount);
+      priceRef.current = spec.amount;
+    }
+
+    const shouldTrack =
+      spec !== null &&
+      (flowAction === 'tracking_confirmed' || currentFlow === 'ASKED_PRICE');
+
+    if (flowAction === 'ask_price') {
+      setFlowState('ASKED_PRICE');
+      flowRef.current = 'ASKED_PRICE';
+    } else if (shouldTrack && spec) {
+      const id = Date.now().toString();
+      const payload = buildTrackedItemFromSpec(spec, {
+        id,
+        name: pendingProductRef.current.name,
+        description: pendingProductRef.current.description,
+        image: pendingProductRef.current.image,
+        url: pendingProductRef.current.url || undefined,
+      });
+      onTrackItem(payload as TrackedItem);
+      setFlowState('IDLE');
+      flowRef.current = 'IDLE';
+      pendingProductRef.current = {
+        name: 'Tracked Item',
+        image: '',
+        description: 'Product tracked via Penny Concierge.',
+        scrapedPrice: null,
+        url: '',
+      };
+    }
+  }
+
+  useEffect(() => {
+    if (!chatSeed?.text || !sessionId || !onChatSeedConsumed) return;
+    const { id, text } = chatSeed;
+    onChatSeedConsumed();
+    const userMsg: Message = { id: `seed-${id}`, sender: 'YOU', text };
+    const conv = [...messagesRef.current, userMsg];
+    messagesRef.current = conv;
+    setMessages(conv);
+    void (async () => {
+      setIsLoading(true);
+      try {
+        await runPennyExchange(conv, text);
+      } catch {
+        addMessage({ sender: 'PENNY', text: 'My intelligence systems are temporarily offline. Please try again.' });
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seed id is the trigger; run once per handoff
+  }, [chatSeed?.id, sessionId]);
 
   // Called when user clicks "+ Add to Tracked Portfolio" on a message
   const handleTrackFromMessage = (msg: Message) => {
@@ -206,65 +298,7 @@ export function ChatScreen({
     }
 
     try {
-      const history = toOpenAIMessages([...messages, { id: 'tmp', sender: 'YOU', text }]);
-
-      const res = await fetch('/api/chat/message', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history, sessionId }),
-      });
-
-      if (!res.ok) throw new Error('API error');
-
-      const data = await res.json();
-      const { reply, reasoning, conclusion, confidence, next_steps, productName, flowAction, target } = data;
-
-      // Update pending product name from AI
-      if (productName) pendingProductRef.current.name = productName;
-
-      const pennyResponse: PennyResponse = { reasoning, conclusion, confidence, next_steps };
-      addMessage({ sender: 'PENNY', text: reply, pennyResponse });
-
-      const refGuess =
-        pendingProductRef.current.scrapedPrice && pendingProductRef.current.scrapedPrice > 0
-          ? pendingProductRef.current.scrapedPrice
-          : 0;
-      const spec = resolveTargetSpec(target, text, refGuess);
-
-      if (spec?.kind === 'absolute') {
-        setPendingTargetPrice(spec.amount);
-        priceRef.current = spec.amount;
-      }
-
-      const shouldTrack =
-        spec !== null &&
-        (flowAction === 'tracking_confirmed' || currentFlow === 'ASKED_PRICE');
-
-      // Flow transitions via explicit signal
-      if (flowAction === 'ask_price') {
-        setFlowState('ASKED_PRICE');
-        flowRef.current = 'ASKED_PRICE';
-      } else if (shouldTrack && spec) {
-        const id = Date.now().toString();
-        const payload = buildTrackedItemFromSpec(spec, {
-          id,
-          name: pendingProductRef.current.name,
-          description: pendingProductRef.current.description,
-          image: pendingProductRef.current.image,
-          url: pendingProductRef.current.url || undefined,
-        });
-        onTrackItem(payload as TrackedItem);
-        setFlowState('IDLE');
-        flowRef.current = 'IDLE';
-        pendingProductRef.current = {
-          name: 'Tracked Item',
-          image: '',
-          description: 'Product tracked via Penny Concierge.',
-          scrapedPrice: null,
-          url: '',
-        };
-      }
-
+      await runPennyExchange([...messages, { id: 'tmp', sender: 'YOU', text }], text);
     } catch {
       addMessage({ sender: 'PENNY', text: 'My intelligence systems are temporarily offline. Please try again.' });
     } finally {

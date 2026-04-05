@@ -1,3 +1,5 @@
+import type { TrackedItem } from './types';
+
 export type TargetSpec =
   | { kind: 'absolute'; amount: number }
   | { kind: 'percent_off'; percent: number; referencePrice: number };
@@ -10,8 +12,12 @@ export function parseTargetFromUserText(text: string, fallbackReference: number)
   const relativeCue = /\b(lower|less|cheaper|off|discount|below|under|drop|reduction|save)\b/.test(lower);
   const looksPercent = Boolean(pctMatch && (relativeCue || text.includes('%')));
 
+  // Don't treat the number in "20%" as a dollar amount (was causing "20% below" → $20 reference).
   const dollarNums: number[] = [];
   for (const m of text.matchAll(/\$?\s*([\d,]+\.?\d*)\b/g)) {
+    const idx = m.index ?? 0;
+    const matched = m[0];
+    if (text[idx + matched.length] === '%') continue;
     const n = parseFloat(m[1].replace(/,/g, ''));
     if (!isNaN(n) && n > 0) dollarNums.push(n);
   }
@@ -52,12 +58,25 @@ function coerceApiTarget(raw: unknown, fallbackReference: number): TargetSpec | 
   return null;
 }
 
+/** If scraped/list price exists and the chosen reference is far below it, the reference is likely a bad parse (e.g. "20%" → $20). */
+function reconcilePercentReference(referencePrice: number, fallbackReference: number): number {
+  if (fallbackReference > 0 && referencePrice > 0 && referencePrice < fallbackReference * 0.25) {
+    return fallbackReference;
+  }
+  return referencePrice;
+}
+
 export function resolveTargetSpec(
   apiTarget: unknown,
   userText: string,
   fallbackReference: number,
 ): TargetSpec | null {
-  return coerceApiTarget(apiTarget, fallbackReference) ?? parseTargetFromUserText(userText, fallbackReference);
+  const spec = coerceApiTarget(apiTarget, fallbackReference) ?? parseTargetFromUserText(userText, fallbackReference);
+  if (!spec || spec.kind !== 'percent_off') return spec;
+  return {
+    ...spec,
+    referencePrice: reconcilePercentReference(spec.referencePrice, fallbackReference),
+  };
 }
 
 export function buildTrackedItemFromSpec(
@@ -119,6 +138,55 @@ export function effectiveTargetDisplay(item: {
     if (p > 0 && p < 100 && r > 0) return r * (1 - p / 100);
   }
   return item.targetPrice;
+}
+
+/** Quick-add an alternative SKU using the same target rules as the parent tracked item. */
+export function buildTrackedItemFromParentAlternative(
+  parent: {
+    targetMode?: string | null;
+    targetPercent?: number | null;
+    targetReferencePrice?: number | null;
+    targetPrice: number;
+  },
+  alt: { title: string; url: string; estimatedPrice: number; notes?: string | null },
+): Omit<TrackedItem, 'id'> {
+  const description = (alt.notes?.trim() || `Similar to tracked item: ${alt.title}`).slice(0, 500);
+  if (
+    parent.targetMode === 'percent_off' &&
+    parent.targetPercent != null &&
+    parent.targetPercent > 0 &&
+    parent.targetPercent < 100
+  ) {
+    const referencePrice = alt.estimatedPrice;
+    const targetPrice = referencePrice * (1 - parent.targetPercent / 100);
+    return {
+      name: alt.title.slice(0, 200),
+      description,
+      status: 'Tracking Active',
+      updatedAt: 'Just now',
+      bestPrice: referencePrice,
+      targetPrice,
+      targetMode: 'percent_off',
+      targetPercent: parent.targetPercent,
+      targetReferencePrice: referencePrice,
+      image: '',
+      url: alt.url,
+    };
+  }
+  const threshold = effectiveTargetDisplay(parent);
+  return {
+    name: alt.title.slice(0, 200),
+    description,
+    status: 'Tracking Active',
+    updatedAt: 'Just now',
+    bestPrice: Math.max(alt.estimatedPrice, threshold * 1.01),
+    targetPrice: threshold,
+    targetMode: 'absolute',
+    targetPercent: null,
+    targetReferencePrice: null,
+    image: '',
+    url: alt.url,
+  };
 }
 
 export function formatTargetLabel(item: {

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { LandingScreen } from './components/LandingScreen';
-import { ChatScreen } from './components/ChatScreen';
+import { ChatScreen, type ChatSeedPayload } from './components/ChatScreen';
 import { ReportScreen } from './components/ReportScreen';
 import { TrackedScreen } from './components/TrackedScreen';
 import { SettingsScreen } from './components/SettingsScreen';
@@ -23,6 +23,7 @@ export default function App() {
   const [chatFlowState, setChatFlowState] = useState<ChatFlowState>('IDLE');
   const [pendingTargetPrice, setPendingTargetPrice] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [chatSeed, setChatSeed] = useState<ChatSeedPayload | null>(null);
 
   // Load tracked items from API on mount
   useEffect(() => {
@@ -85,9 +86,23 @@ export default function App() {
             setPendingTargetPrice={setPendingTargetPrice}
             onTrackItem={handleTrackItem}
             sessionId={sessionId}
+            chatSeed={chatSeed}
+            onChatSeedConsumed={() => setChatSeed(null)}
           />
         )}
-        {currentScreen === 'report' && <ReportScreen item={selectedItem} onBack={() => setCurrentScreen('tracked')} />}
+        {currentScreen === 'report' && (
+          <ReportScreen
+            item={selectedItem}
+            onBack={() => setCurrentScreen('tracked')}
+            onOpenChatWithMessage={(text) => {
+              setChatSeed({ id: crypto.randomUUID(), text });
+              setCurrentScreen('chat');
+            }}
+            onTrackedItemsChange={() => {
+              fetchItems().then(setTrackedItems).catch(() => {});
+            }}
+          />
+        )}
         {currentScreen === 'tracked' && <TrackedScreen items={trackedItems} onSelectItem={(item) => { setSelectedItem(item); setCurrentScreen('report'); }} />}
         {currentScreen === 'settings' && <SettingsScreen />}
       </main>
