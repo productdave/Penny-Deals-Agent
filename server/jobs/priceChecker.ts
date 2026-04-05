@@ -6,7 +6,11 @@ import { randomUUID } from 'crypto';
 import { sendPriceAlert } from './mailer';
 import { effectiveTargetPrice } from '../lib/effectiveTarget';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let _openai: OpenAI | null = null;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _openai;
+}
 
 const PRICE_LOOKUP_PROMPT = `You are a price lookup assistant. Given a product name, find its current lowest retail price in USD.
 
@@ -52,7 +56,7 @@ async function lookupCurrentPrice(productName: string, productUrl?: string): Pro
     // Fall back to GPT-4o web search
     let rawOutput = '';
     try {
-      const response = await (openai as any).responses.create({
+      const response = await (getOpenAI() as any).responses.create({
         model: 'gpt-4o',
         tools: [{ type: 'web_search_preview' }],
         instructions: PRICE_LOOKUP_PROMPT,
@@ -61,7 +65,7 @@ async function lookupCurrentPrice(productName: string, productUrl?: string): Pro
       });
       rawOutput = response.output_text ?? '';
     } catch {
-      const fallback = await openai.chat.completions.create({
+      const fallback = await getOpenAI().chat.completions.create({
         model: 'gpt-4o',
         messages: [
           { role: 'system', content: PRICE_LOOKUP_PROMPT },

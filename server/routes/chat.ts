@@ -7,7 +7,11 @@ import { randomUUID } from 'crypto';
 import OpenAI from 'openai';
 
 const router = Router();
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let _openai: OpenAI | null = null;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _openai;
+}
 
 /** Prefer SDK aggregate; fall back if output_text is empty after tool calls. */
 function textFromResponsesOutput(response: { output_text?: string; output?: unknown[] }): string {
@@ -212,7 +216,7 @@ Task: Find similar products or buying alternatives. Return JSON as instructed.`;
 
     let rawOutput = '';
     const runAlternativesResponses = async () => {
-      const response = await (openai as any).responses.create({
+      const response = await (getOpenAI() as any).responses.create({
         model: 'gpt-4o',
         tools: [{ type: 'web_search_preview' }],
         tool_choice: 'required',
@@ -304,7 +308,7 @@ router.post('/message', async (req, res) => {
 
     try {
       // Use Responses API with web search for live price/product data
-      const response = await (openai as any).responses.create({
+      const response = await (getOpenAI() as any).responses.create({
         model: 'gpt-4o',
         tools: [{ type: 'web_search_preview' }],
         input: inputMessages,
@@ -313,7 +317,7 @@ router.post('/message', async (req, res) => {
       rawOutput = textFromResponsesOutput(response);
     } catch {
       // Fallback to Chat Completions if Responses API is unavailable
-      const fallback = await openai.chat.completions.create({
+      const fallback = await getOpenAI().chat.completions.create({
         model: 'gpt-4o',
         messages: inputMessages,
         response_format: { type: 'json_object' },
