@@ -4,6 +4,7 @@ import { trackedItems, priceHistory } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { sendPriceAlert } from './mailer';
+import { effectiveTargetPrice } from '../lib/effectiveTarget';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -109,11 +110,12 @@ export async function runPriceCheck(): Promise<PriceCheckResult[]> {
   for (const item of items) {
     console.log(`[priceChecker] Checking: ${item.name}`);
 
+    const threshold = effectiveTargetPrice(item);
     const { price: newPrice, source, confidence } = await lookupCurrentPrice(item.name, item.url ?? undefined);
 
     if (newPrice === null || confidence === 'low') {
       console.log(`[priceChecker] Low confidence or no price for "${item.name}", skipping`);
-      results.push({ name: item.name, oldPrice: item.bestPrice, newPrice, targetPrice: item.targetPrice, source, confidence, status: 'skipped', hitTarget: false, emailSent: false });
+      results.push({ name: item.name, oldPrice: item.bestPrice, newPrice, targetPrice: threshold, source, confidence, status: 'skipped', hitTarget: false, emailSent: false });
       continue;
     }
 
@@ -123,13 +125,13 @@ export async function runPriceCheck(): Promise<PriceCheckResult[]> {
 
     if (!priceChanged) {
       console.log(`[priceChecker] No change for "${item.name}" ($${newPrice})`);
-      results.push({ name: item.name, oldPrice, newPrice, targetPrice: item.targetPrice, source, confidence, status: 'no_change', hitTarget: newPrice <= item.targetPrice, emailSent: false });
+      results.push({ name: item.name, oldPrice, newPrice, targetPrice: threshold, source, confidence, status: 'no_change', hitTarget: newPrice <= threshold, emailSent: false });
       continue;
     }
 
     console.log(`[priceChecker] Price changed for "${item.name}": $${oldPrice} → $${newPrice} (via ${source})`);
 
-    const hitTarget = newPrice <= item.targetPrice;
+    const hitTarget = newPrice <= threshold;
     const dropped = newPrice < oldPrice;
     const newStatus = hitTarget || dropped ? 'Price Drop!' : 'Stable';
     const now = new Date();
@@ -154,7 +156,11 @@ export async function runPriceCheck(): Promise<PriceCheckResult[]> {
           productName: item.name,
           oldPrice,
           newPrice,
-          targetPrice: item.targetPrice,
+          targetPrice: threshold,
+          targetDescription:
+            item.targetMode === 'percent_off' && item.targetPercent != null && item.targetReferencePrice != null
+              ? `${item.targetPercent}% below $${item.targetReferencePrice.toFixed(2)} ($${threshold.toFixed(2)})`
+              : undefined,
           hitTarget,
           image: item.image ?? undefined,
           url: item.url ?? undefined,
@@ -171,7 +177,7 @@ export async function runPriceCheck(): Promise<PriceCheckResult[]> {
       name: item.name,
       oldPrice,
       newPrice,
-      targetPrice: item.targetPrice,
+      targetPrice: threshold,
       source,
       confidence,
       status: dropped ? 'price_drop' : 'price_increase',

@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index';
-import { chatSessions, chatMessages } from '../db/schema';
+import { chatSessions, chatMessages, trackedItems } from '../db/schema';
+import { effectiveTargetPrice } from '../lib/effectiveTarget';
 import { randomUUID } from 'crypto';
 import OpenAI from 'openai';
 
@@ -39,14 +40,26 @@ ALWAYS respond with this exact JSON structure:
   "next_steps": ["actionable step 1", "actionable step 2"],
   "clarification_questions": [],
   "product_name": "extracted product name or null",
-  "flow_action": "none" | "ask_price" | "tracking_confirmed"
+  "flow_action": "none" | "ask_price" | "tracking_confirmed",
+  "target": null | { "kind": "absolute", "amount": number } | { "kind": "percent_off", "percent": number, "reference_price": number | null }
 }
 
 FLOW RULES:
-- Set flow_action to "ask_price" ONLY when the user explicitly asks to track/monitor/watch a product AND you have already given a recommendation. Ask for their target price.
-- Set flow_action to "tracking_confirmed" ONLY when the user has just provided a price in response to your ask_price request.
-- Set flow_action to "none" for all research and recommendation responses.
+- Set flow_action to "ask_price" ONLY when the user explicitly asks to track/monitor/watch a product AND you have already given a recommendation. Ask for their target price OR a relative discount (e.g. 20% below current price).
+- Set flow_action to "tracking_confirmed" when the user has just answered your ask_price request with EITHER a clear dollar target OR a percentage below a reference price (e.g. "20% lower", "15% off").
+- When confirming tracking, you MUST set "target":
+  - Dollar target: { "kind": "absolute", "amount": 99.99 }
+  - Percent below reference: { "kind": "percent_off", "percent": 20, "reference_price": 129.99 } — use your best estimate of current regular price from this conversation; use null for reference_price only if you have no estimate (the app may use a scraped price).
+- If the user's answer is ambiguous (no dollar or percent), keep flow_action "none", target null, and ask a short clarifying question in message_markdown.
+- Set flow_action to "none" for all normal research and recommendation responses.
 - conclusion and confidence should be null only for non-product messages (greetings, follow-ups, etc.)
+
+TRACKED PORTFOLIO (injected every request as JSON after this prompt):
+- You receive a JSON array "tracked_portfolio" of the user's saved Penny items (may be empty). This is authoritative for "what I'm tracking", "all my items", "my shoes", portfolio rollups, comparisons to targets, etc.
+- When the user asks about multiple items, EVERY matching row must appear in your answer — never summarize with a single product unless they asked about one.
+- For filters (e.g. "shoes", "electronics"): include items whose name or description clearly fits; briefly note if you excluded borderline cases.
+- Fields: bestPriceUsd is the last price stored in Penny (from checks or setup). If they want live/current/latest prices, use web search for each relevant product and label results as live vs. stored. If search is inconclusive for an item, say so and cite the stored bestPriceUsd.
+- Empty portfolio: say clearly they have nothing tracked yet and offer to help add items.
 
 STYLE RULES:
 - Evidence before advice. Always.
@@ -95,6 +108,22 @@ router.post('/sessions/:sessionId/messages', async (req, res) => {
 
 // ─── Main AI endpoint ────────────────────────────────────────────────────────
 
+function buildTrackedPortfolioPayload(rows: (typeof trackedItems.$inferSelect)[]) {
+  const max = 100;
+  const slice = rows.slice(0, max);
+  return slice.map((item) => ({
+    id: item.id,
+    name: item.name,
+    description: item.description,
+    status: item.status,
+    bestPriceUsd: item.bestPrice,
+    targetThresholdUsd: effectiveTargetPrice(item),
+    targetMode: item.targetMode,
+    url: item.url || null,
+    lastUpdatedLabel: item.updatedAt,
+  }));
+}
+
 router.post('/message', async (req, res) => {
   try {
     const { messages, sessionId } = req.body as {
@@ -102,9 +131,17 @@ router.post('/message', async (req, res) => {
       sessionId?: string;
     };
 
+    const portfolioRows = await db.select().from(trackedItems).orderBy(trackedItems.createdAt);
+    const tracked_portfolio = buildTrackedPortfolioPayload(portfolioRows);
+    const portfolioNote =
+      portfolioRows.length > 100
+        ? `\nNote: ${portfolioRows.length} items total; showing first 100 in tracked_portfolio.`
+        : '';
+    const systemWithPortfolio = `${PENNY_SYSTEM_PROMPT}\n\ntracked_portfolio:${portfolioNote}\n${JSON.stringify(tracked_portfolio)}`;
+
     // Build input for Responses API (supports web_search_preview)
     const inputMessages = [
-      { role: 'system' as const, content: PENNY_SYSTEM_PROMPT },
+      { role: 'system' as const, content: systemWithPortfolio },
       ...messages,
     ];
 
@@ -140,6 +177,7 @@ router.post('/message', async (req, res) => {
       clarification_questions?: string[];
       product_name?: string | null;
       flow_action?: string;
+      target?: unknown;
     };
 
     try {
@@ -154,6 +192,7 @@ router.post('/message', async (req, res) => {
         clarification_questions: [],
         product_name: null,
         flow_action: 'none',
+        target: null,
       };
     }
 
@@ -181,6 +220,7 @@ router.post('/message', async (req, res) => {
       clarification_questions: parsed.clarification_questions ?? [],
       productName: parsed.product_name ?? null,
       flowAction: parsed.flow_action ?? 'none',
+      target: parsed.target ?? null,
     });
 
   } catch (err: any) {

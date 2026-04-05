@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Link2, Image as ImageIcon, Send, ShoppingCart, Clock, Eye, ChevronRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { TrackedItem, Message, ChatFlowState, PennyResponse } from '../types';
+import { resolveTargetSpec, buildTrackedItemFromSpec } from '../targetSpec';
 
 interface ChatScreenProps {
   messages: Message[];
@@ -139,8 +140,18 @@ export function ChatScreen({
 
   const flowRef = useRef(flowState);
   const priceRef = useRef(pendingTargetPrice);
-  const pendingProductRef = useRef<{ name: string; image: string; description: string }>({
-    name: 'Tracked Item', image: '', description: 'Product tracked via Penny Concierge.',
+  const pendingProductRef = useRef<{
+    name: string;
+    image: string;
+    description: string;
+    scrapedPrice: number | null;
+    url: string;
+  }>({
+    name: 'Tracked Item',
+    image: '',
+    description: 'Product tracked via Penny Concierge.',
+    scrapedPrice: null,
+    url: '',
   });
 
   useEffect(() => { flowRef.current = flowState; }, [flowState]);
@@ -158,7 +169,7 @@ export function ChatScreen({
 
     addMessage({
       sender: 'PENNY',
-      text: `Understood. What is your target acquisition price for the ${name}?`,
+      text: `Understood. What is your target for **${name}** — a dollar amount (e.g. **$99**) or a **relative discount** (e.g. **20% below** the current price)?`,
       pennyResponse: { flow_action: 'ask_price' } as any,
     });
     setFlowState('ASKED_PRICE');
@@ -177,6 +188,7 @@ export function ChatScreen({
     // Scrape URL if pasted in IDLE state
     if (isURL(text) && currentFlow === 'IDLE') {
       addMessage({ sender: 'YOU', text });
+      pendingProductRef.current.url = text;
       try {
         const scrapeRes = await fetch(`/api/scrape?url=${encodeURIComponent(text)}`);
         if (scrapeRes.ok) {
@@ -184,19 +196,13 @@ export function ChatScreen({
           if (product.title) pendingProductRef.current.name = product.title;
           if (product.image) pendingProductRef.current.image = product.image;
           if (product.description) pendingProductRef.current.description = product.description;
+          if (typeof product.price === 'number' && product.price > 0) {
+            pendingProductRef.current.scrapedPrice = product.price;
+          }
         }
       } catch { /* silent */ }
     } else {
       addMessage({ sender: 'YOU', text });
-    }
-
-    // Parse price if in price-asking flow
-    if (currentFlow === 'ASKED_PRICE') {
-      const price = parseFloat(text.replace(/[^0-9.]/g, ''));
-      if (!isNaN(price) && price > 0) {
-        setPendingTargetPrice(price);
-        priceRef.current = price;
-      }
     }
 
     try {
@@ -211,7 +217,7 @@ export function ChatScreen({
       if (!res.ok) throw new Error('API error');
 
       const data = await res.json();
-      const { reply, reasoning, conclusion, confidence, next_steps, productName, flowAction } = data;
+      const { reply, reasoning, conclusion, confidence, next_steps, productName, flowAction, target } = data;
 
       // Update pending product name from AI
       if (productName) pendingProductRef.current.name = productName;
@@ -219,24 +225,44 @@ export function ChatScreen({
       const pennyResponse: PennyResponse = { reasoning, conclusion, confidence, next_steps };
       addMessage({ sender: 'PENNY', text: reply, pennyResponse });
 
+      const refGuess =
+        pendingProductRef.current.scrapedPrice && pendingProductRef.current.scrapedPrice > 0
+          ? pendingProductRef.current.scrapedPrice
+          : 0;
+      const spec = resolveTargetSpec(target, text, refGuess);
+
+      if (spec?.kind === 'absolute') {
+        setPendingTargetPrice(spec.amount);
+        priceRef.current = spec.amount;
+      }
+
+      const shouldTrack =
+        spec !== null &&
+        (flowAction === 'tracking_confirmed' || currentFlow === 'ASKED_PRICE');
+
       // Flow transitions via explicit signal
       if (flowAction === 'ask_price') {
         setFlowState('ASKED_PRICE');
         flowRef.current = 'ASKED_PRICE';
-      } else if (flowAction === 'tracking_confirmed' || currentFlow === 'ASKED_PRICE') {
-        onTrackItem({
-          id: Date.now().toString(),
+      } else if (shouldTrack && spec) {
+        const id = Date.now().toString();
+        const payload = buildTrackedItemFromSpec(spec, {
+          id,
           name: pendingProductRef.current.name,
           description: pendingProductRef.current.description,
-          status: 'Tracking Active',
-          updatedAt: 'Just now',
-          bestPrice: priceRef.current > 0 ? priceRef.current * 1.15 : 299.99,
-          targetPrice: priceRef.current || 250,
           image: pendingProductRef.current.image,
+          url: pendingProductRef.current.url || undefined,
         });
+        onTrackItem(payload as TrackedItem);
         setFlowState('IDLE');
         flowRef.current = 'IDLE';
-        pendingProductRef.current = { name: 'Tracked Item', image: '', description: 'Product tracked via Penny Concierge.' };
+        pendingProductRef.current = {
+          name: 'Tracked Item',
+          image: '',
+          description: 'Product tracked via Penny Concierge.',
+          scrapedPrice: null,
+          url: '',
+        };
       }
 
     } catch {
@@ -252,7 +278,7 @@ export function ChatScreen({
         <div className="flex flex-col items-center mb-8">
           <div className="text-[10px] font-bold tracking-[0.2em] text-primary/60 uppercase mb-4">Intelligence Terminal</div>
           <div className="p-4 bg-surface-container-low border-l-2 border-primary/30 max-w-sm text-center">
-            <p className="text-xs italic opacity-60 leading-relaxed">Send a product name, URL, or paste an image to get a Buy / Wait / Track recommendation.</p>
+            <p className="text-xs italic opacity-60 leading-relaxed">Send a product name, URL, or paste an image for a Buy / Wait / Track readout — or ask about your whole tracked list (e.g. latest prices, 'show my shoes', portfolio summary).</p>
           </div>
         </div>
 
@@ -313,7 +339,13 @@ export function ChatScreen({
                 onChange={e => setInputValue(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
                 className="w-full bg-transparent border-none border-b border-outline/30 focus:ring-0 focus:border-primary py-2 px-0 text-on-surface placeholder:text-outline/50 resize-none font-body text-base outline-none"
-                placeholder={isLoading ? 'Penny is researching...' : 'Product name, URL, or paste a link...'}
+                placeholder={
+                  isLoading
+                    ? 'Penny is researching...'
+                    : flowState === 'ASKED_PRICE'
+                      ? 'e.g. $99 or 20% below current price…'
+                      : 'Product name, URL, or paste a link...'
+                }
                 rows={1}
                 disabled={isLoading}
               />

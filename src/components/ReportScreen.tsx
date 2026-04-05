@@ -1,5 +1,6 @@
 import { BadgeCheck, ShoppingCart, Activity, ArrowRightLeft, Sparkles, ArrowLeft, Eye, Clock } from 'lucide-react';
 import { TrackedItem } from '../types';
+import { effectiveTargetDisplay, formatTargetLabel } from '../targetSpec';
 
 interface ReportScreenProps {
   item: TrackedItem | null;
@@ -39,9 +40,11 @@ export function ReportScreen({ item, onBack }: ReportScreenProps) {
     );
   }
 
-  const savingsAmt = item.bestPrice - item.targetPrice;
-  const savingsPct = item.targetPrice > 0 ? Math.round((savingsAmt / item.targetPrice) * 100) : 0;
-  const atOrBelowTarget = item.bestPrice <= item.targetPrice;
+  const targetThreshold = effectiveTargetDisplay(item);
+  const savingsAmt = item.bestPrice - targetThreshold;
+  const savingsPct = targetThreshold > 0 ? Math.round((savingsAmt / targetThreshold) * 100) : 0;
+  const atOrBelowTarget = item.bestPrice <= targetThreshold;
+  const targetLabel = formatTargetLabel(item);
 
   // Derive a simple verdict from the item state
   const verdict = item.status.includes('Drop') ? 'BUY'
@@ -89,8 +92,8 @@ export function ReportScreen({ item, onBack }: ReportScreenProps) {
           <div className="space-y-4 relative z-10">
             <p className="text-on-surface text-xl leading-relaxed font-body">
               {atOrBelowTarget
-                ? `Best price of $${item.bestPrice.toFixed(2)} is at or below your target of $${item.targetPrice.toFixed(2)}. This is an optimal acquisition window.`
-                : `Best price of $${item.bestPrice.toFixed(2)} is $${Math.abs(savingsAmt).toFixed(2)} above your target of $${item.targetPrice.toFixed(2)}. Monitoring for a better entry point.`}
+                ? `Best price of $${item.bestPrice.toFixed(2)} is at or below your target (${targetLabel}). This is an optimal acquisition window.`
+                : `Best price of $${item.bestPrice.toFixed(2)} is $${Math.abs(savingsAmt).toFixed(2)} above your target (${targetLabel}). Monitoring for a better entry point.`}
             </p>
             <div className="pt-4 border-t border-outline-variant/30 flex gap-6">
               <div className="flex flex-col">
@@ -118,8 +121,15 @@ export function ReportScreen({ item, onBack }: ReportScreenProps) {
             <div>
               <span className="text-[10px] text-on-surface-variant uppercase tracking-widest block mb-1">Your Target</span>
               <span className={`text-2xl font-medium tracking-tight ${atOrBelowTarget ? 'text-green-400' : 'opacity-50 line-through'}`}>
-                ${item.targetPrice.toFixed(2)}
+                ${targetThreshold.toFixed(2)}
               </span>
+              {item.targetMode === 'percent_off' &&
+                item.targetPercent != null &&
+                item.targetReferencePrice != null && (
+                <span className="block text-xs text-on-surface-variant mt-1 opacity-80">
+                  {item.targetPercent}% below ${item.targetReferencePrice.toFixed(2)} reference
+                </span>
+              )}
             </div>
             {!atOrBelowTarget && (
               <div className="pt-4 space-y-2">
@@ -130,7 +140,7 @@ export function ReportScreen({ item, onBack }: ReportScreenProps) {
                 <div className="w-full bg-surface-container-highest h-1.5 overflow-hidden">
                   <div
                     className="bg-primary h-full transition-all"
-                    style={{ width: `${Math.min(100, (item.targetPrice / item.bestPrice) * 100)}%` }}
+                    style={{ width: `${Math.min(100, (targetThreshold / item.bestPrice) * 100)}%` }}
                   />
                 </div>
                 <p className="text-[10px] text-on-surface-variant italic">Tracking until target is reached.</p>
@@ -181,7 +191,7 @@ export function ReportScreen({ item, onBack }: ReportScreenProps) {
               { label: 'Product Name', value: item.name },
               { label: 'Description', value: item.description },
               { label: 'Best Price', value: `$${item.bestPrice.toFixed(2)}` },
-              { label: 'Target Price', value: `$${item.targetPrice.toFixed(2)}` },
+              { label: 'Target', value: targetLabel },
               { label: 'Status', value: item.status },
               { label: 'Last Updated', value: item.updatedAt },
             ].map(({ label, value }) => (
