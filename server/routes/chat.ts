@@ -383,8 +383,8 @@ router.post('/message', async (req, res) => {
     });
 
   } catch (err: any) {
-    console.error('Penny error:', err?.message);
-    res.status(500).json({ error: 'Failed to get AI response' });
+    console.error('Penny error:', err?.message, err?.status, err?.code);
+    res.status(500).json({ error: 'Failed to get AI response', detail: err?.message });
   }
 });
 
