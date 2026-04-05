@@ -49,6 +49,11 @@ router.post('/', async (req, res) => {
       alertEmail: alertEmail ?? '',
       updatedAt: updatedAt ?? 'Just now',
     }).returning();
+    await db.insert(priceHistory).values({
+      itemId: id,
+      price: bestPrice,
+      source: 'initial',
+    });
     res.status(201).json(item);
   } catch (err) {
     res.status(500).json({ error: 'Failed to create item' });

@@ -23,6 +23,47 @@ export async function deleteItem(id: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete item');
 }
 
+export interface PriceHistoryRow {
+  id: number;
+  itemId: string;
+  price: number;
+  source: string | null;
+  recordedAt: string | number | Date;
+}
+
+export async function fetchPriceHistory(itemId: string): Promise<PriceHistoryRow[]> {
+  const res = await fetch(`/api/items/${itemId}/price-history`);
+  if (!res.ok) throw new Error('Failed to fetch price history');
+  return res.json();
+}
+
+export interface AlternativePick {
+  title: string;
+  url: string | null;
+  estimated_price: number | null;
+  notes?: string | null;
+}
+
+export interface AlternativesResponse {
+  messageMarkdown: string;
+  alternatives: AlternativePick[];
+}
+
+export async function fetchAlternatives(itemId: string): Promise<AlternativesResponse> {
+  const res = await fetch('/api/chat/alternatives', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemId }),
+    cache: 'no-store',
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? 'Failed to fetch alternatives');
+  return {
+    messageMarkdown: data.messageMarkdown ?? '',
+    alternatives: data.alternatives ?? [],
+  };
+}
+
 // --- Chat ---
 
 export async function createChatSession(): Promise<{ id: string }> {

@@ -9,6 +9,31 @@ import OpenAI from 'openai';
 const router = Router();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+/** Prefer SDK aggregate; fall back if output_text is empty after tool calls. */
+function textFromResponsesOutput(response: { output_text?: string; output?: unknown[] }): string {
+  const direct = response.output_text?.trim();
+  if (direct) return response.output_text ?? '';
+  const out = response.output;
+  if (!Array.isArray(out)) return '';
+  const parts: string[] = [];
+  for (const item of out) {
+    if (!item || typeof item !== 'object') continue;
+    const content = (item as { content?: unknown[] }).content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (
+        block &&
+        typeof block === 'object' &&
+        (block as { type?: string }).type === 'output_text' &&
+        typeof (block as { text?: string }).text === 'string'
+      ) {
+        parts.push((block as { text: string }).text);
+      }
+    }
+  }
+  return parts.join('');
+}
+
 // ─── Penny system prompt ────────────────────────────────────────────────────
 const PENNY_SYSTEM_PROMPT = `You are Penny, a sharp, classy AI shopping intelligence assistant with a confident 1960s Bond-style flavour.
 
@@ -124,6 +149,136 @@ function buildTrackedPortfolioPayload(rows: (typeof trackedItems.$inferSelect)[]
   }));
 }
 
+const ALTERNATIVES_SYSTEM_PROMPT = `You are Penny, a sharp shopping intelligence assistant. The user is comparing alternatives to a product they already track in Penny.
+
+MANDATORY: You MUST use the web search tool in this turn before you answer. Run one or more searches for current listings (product name + retailer, or "buy [product]") so your picks reflect what is live on the web right now.
+
+Every non-null "url" must be copied from search results you just retrieved in this request (product detail pages). Do not use URLs from memory, training data, or the tracked product URL alone. If search does not surface a stable product page, set url to null.
+
+Be honest when you cannot verify a price or URL.
+
+Respond with ONLY valid JSON (no markdown outside JSON) in this exact shape:
+{
+  "message_markdown": "Markdown summary for the user: brief comparison, tradeoffs, and end by asking if they want to track any of the picks.",
+  "alternatives": [
+    {
+      "title": "Product name",
+      "url": "https://... full product page URL or null if unknown",
+      "estimated_price": 99.99,
+      "notes": "One line why it is comparable"
+    }
+  ]
+}
+
+Rules:
+- Include 2–5 alternatives when possible.
+- estimated_price must be a number in USD when you have a concrete price from search; otherwise null.
+- url must be a real product page you found via search, or null.
+- Never invent URLs or prices; use null if uncertain.`;
+
+router.post('/alternatives', async (req, res) => {
+  try {
+    const { itemId } = req.body as { itemId?: string };
+    if (!itemId || typeof itemId !== 'string') {
+      return res.status(400).json({ error: 'itemId is required' });
+    }
+    const [row] = await db.select().from(trackedItems).where(eq(trackedItems.id, itemId)).limit(1);
+    if (!row) {
+      return res.status(404).json({ error: 'Item not found' });
+    }
+    const threshold = effectiveTargetPrice(row);
+    const targetSummary =
+      row.targetMode === 'percent_off' && row.targetPercent != null && row.targetReferencePrice != null
+        ? `${row.targetPercent}% below $${row.targetReferencePrice.toFixed(2)} (threshold ~$${threshold.toFixed(2)})`
+        : `Target threshold $${threshold.toFixed(2)}`;
+
+    const requestId = randomUUID();
+    const userPayload = `Tracked product (authoritative):
+- Name: ${row.name}
+- Description: ${row.description}
+- Product URL: ${row.url || '(none)'}
+- Stored best price (USD): ${row.bestPrice}
+- ${targetSummary}
+
+Freshness token (unique to this request): ${requestId}
+You must run web search now for comparable products and retailers; do not reuse links from prior requests or from memory.
+
+Task: Find similar products or buying alternatives. Return JSON as instructed.`;
+
+    const inputMessages = [
+      { role: 'system' as const, content: ALTERNATIVES_SYSTEM_PROMPT },
+      { role: 'user' as const, content: userPayload },
+    ];
+
+    let rawOutput = '';
+    const runAlternativesResponses = async () => {
+      const response = await (openai as any).responses.create({
+        model: 'gpt-4o',
+        tools: [{ type: 'web_search_preview' }],
+        tool_choice: 'required',
+        store: false,
+        input: inputMessages,
+        text: { format: { type: 'json_object' } },
+      });
+      return textFromResponsesOutput(response);
+    };
+
+    try {
+      rawOutput = await runAlternativesResponses();
+    } catch (firstErr: unknown) {
+      console.error('Penny alternatives Responses API error:', (firstErr as Error)?.message ?? firstErr);
+      try {
+        rawOutput = await runAlternativesResponses();
+      } catch (secondErr: unknown) {
+        console.error('Penny alternatives retry failed:', (secondErr as Error)?.message ?? secondErr);
+        res.set('Cache-Control', 'no-store');
+        return res.status(503).json({
+          error:
+            'Live product search is temporarily unavailable. Please try Compare alternatives again in a moment.',
+        });
+      }
+    }
+
+    let messageMarkdown = '';
+    let alternatives: {
+      title?: string;
+      url?: string | null;
+      estimated_price?: number | null;
+      notes?: string | null;
+    }[] = [];
+
+    try {
+      const parsed = JSON.parse(rawOutput) as {
+        message_markdown?: string;
+        alternatives?: typeof alternatives;
+      };
+      messageMarkdown = parsed.message_markdown ?? '';
+      alternatives = Array.isArray(parsed.alternatives) ? parsed.alternatives : [];
+    } catch {
+      messageMarkdown = 'I could not parse structured alternatives. Here is the raw response:\n\n' + rawOutput;
+      alternatives = [];
+    }
+
+    const normalized = alternatives
+      .filter((a) => a && typeof a.title === 'string' && a.title.trim())
+      .map((a) => ({
+        title: String(a.title).trim(),
+        url: typeof a.url === 'string' && /^https?:\/\//i.test(a.url.trim()) ? a.url.trim() : null,
+        estimated_price: typeof a.estimated_price === 'number' && a.estimated_price > 0 ? a.estimated_price : null,
+        notes: a.notes != null ? String(a.notes) : null,
+      }));
+
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      messageMarkdown,
+      alternatives: normalized,
+    });
+  } catch (err: any) {
+    console.error('Penny alternatives error:', err?.message);
+    res.status(500).json({ error: 'Failed to get alternatives' });
+  }
+});
+
 router.post('/message', async (req, res) => {
   try {
     const { messages, sessionId } = req.body as {
@@ -155,7 +310,7 @@ router.post('/message', async (req, res) => {
         input: inputMessages,
         text: { format: { type: 'json_object' } },
       });
-      rawOutput = response.output_text ?? '';
+      rawOutput = textFromResponsesOutput(response);
     } catch {
       // Fallback to Chat Completions if Responses API is unavailable
       const fallback = await openai.chat.completions.create({

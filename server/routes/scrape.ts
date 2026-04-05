@@ -22,6 +22,68 @@ function extractTitle(html: string): string {
   return match?.[1]?.trim() ?? '';
 }
 
+function parseOfferPrice(offers: unknown): number | null {
+  if (!offers) return null;
+  const list = Array.isArray(offers) ? offers : [offers];
+  for (const o of list) {
+    if (!o || typeof o !== 'object') continue;
+    const obj = o as Record<string, unknown>;
+    const raw = obj.price ?? obj.lowPrice ?? obj.highPrice;
+    if (typeof raw === 'number' && raw > 0) return raw;
+    if (typeof raw === 'string') {
+      const n = parseFloat(raw.replace(/[^0-9.]/g, ''));
+      if (!isNaN(n) && n > 0) return n;
+    }
+  }
+  return null;
+}
+
+function walkJsonLdForProductPrice(node: unknown): number | null {
+  if (node == null) return null;
+  if (Array.isArray(node)) {
+    for (const x of node) {
+      const p = walkJsonLdForProductPrice(x);
+      if (p != null) return p;
+    }
+    return null;
+  }
+  if (typeof node !== 'object') return null;
+  const o = node as Record<string, unknown>;
+  if (o['@graph']) {
+    const p = walkJsonLdForProductPrice(o['@graph']);
+    if (p != null) return p;
+  }
+  const types = o['@type'];
+  const typeStr = Array.isArray(types) ? types.join(' ') : String(types ?? '');
+  if (/\bProduct\b/i.test(typeStr)) {
+    const fromOffers = parseOfferPrice(o.offers);
+    if (fromOffers != null) return fromOffers;
+  }
+  for (const v of Object.values(o)) {
+    const p = walkJsonLdForProductPrice(v);
+    if (p != null) return p;
+  }
+  return null;
+}
+
+/** Prefer schema.org Product offers (many retailers, including Nike) over generic meta tags. */
+function extractJsonLdProductPrice(html: string): number | null {
+  const re = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const raw = m[1].trim();
+    if (!raw) continue;
+    try {
+      const data = JSON.parse(raw) as unknown;
+      const price = walkJsonLdForProductPrice(data);
+      if (price != null) return price;
+    } catch {
+      /* ignore invalid JSON */
+    }
+  }
+  return null;
+}
+
 // GET /api/scrape?url=...
 router.get('/', async (req, res) => {
   const { url } = req.query as { url?: string };
@@ -64,10 +126,15 @@ router.get('/', async (req, res) => {
       extractMeta(html, 'twitter:image') ||
       extractMeta(html, 'twitter:image:src');
 
-    const price =
+    const jsonLdPrice = extractJsonLdProductPrice(html);
+    const metaPriceStr =
       extractMeta(html, 'og:price:amount') ||
       extractMeta(html, 'product:price:amount') ||
       extractMeta(html, 'twitter:data1');
+    const metaPrice = metaPriceStr ? parseFloat(metaPriceStr) : null;
+    const price =
+      jsonLdPrice ??
+      (metaPrice != null && !isNaN(metaPrice) && metaPrice > 0 ? metaPrice : null);
 
     const currency =
       extractMeta(html, 'og:price:currency') ||
@@ -79,7 +146,7 @@ router.get('/', async (req, res) => {
       title: title || null,
       description: description || null,
       image: image || null,
-      price: price ? parseFloat(price) : null,
+      price,
       currency,
     });
   } catch (err: any) {
