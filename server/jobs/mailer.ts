@@ -3,6 +3,8 @@ export interface PriceAlertPayload {
   oldPrice: number;
   newPrice: number;
   targetPrice: number;
+  /** When set, shown under "Your Target" (e.g. percent-based rule). */
+  targetDescription?: string;
   hitTarget: boolean;
   image?: string;
   url?: string;
@@ -10,7 +12,7 @@ export interface PriceAlertPayload {
 }
 
 export async function sendPriceAlert(payload: PriceAlertPayload) {
-  const { productName, oldPrice, newPrice, targetPrice, hitTarget, image, url, toEmail } = payload;
+  const { productName, oldPrice, newPrice, targetPrice, targetDescription, hitTarget, image, url, toEmail } = payload;
 
   const apiKey = process.env.MAILGUN_API_KEY ?? '';
   const domain = process.env.MAILGUN_DOMAIN ?? '';
@@ -66,6 +68,7 @@ export async function sendPriceAlert(payload: PriceAlertPayload) {
           <td style="padding:8px 0;border-top:1px solid #333;">
             <span style="color:#9e9e9e;font-size:11px;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;">Your Target</span><br/>
             <span style="font-size:20px;font-weight:700;color:${hitTarget ? '#4caf50' : '#9e9e9e'};">$${targetPrice.toFixed(2)} ${hitTarget ? '✓ Reached' : ''}</span>
+            ${targetDescription ? `<br/><span style="font-size:13px;color:#888;margin-top:6px;display:inline-block;">${targetDescription}</span>` : ''}
           </td>
         </tr>
       </table>

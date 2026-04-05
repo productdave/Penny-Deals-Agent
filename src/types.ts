@@ -6,7 +6,12 @@ export interface TrackedItem {
   updatedAt: string;
   bestPrice: number;
   targetPrice: number;
+  /** 'absolute' (default) or 'percent_off' (target vs reference × (1 − %/100)) */
+  targetMode?: 'absolute' | 'percent_off' | string | null;
+  targetPercent?: number | null;
+  targetReferencePrice?: number | null;
   image: string;
+  url?: string;
 }
 
 export interface PennyResponse {

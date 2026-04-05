@@ -1,6 +1,7 @@
 import { BellRing, Bell, Trash2, ExternalLink, SlidersHorizontal, TrendingUp, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { TrackedItem } from '../types';
+import { effectiveTargetDisplay } from '../targetSpec';
 
 function ItemImage({ src, alt }: { src: string; alt: string }) {
   const [failed, setFailed] = useState(!src);
@@ -37,7 +38,7 @@ const getBadgeStyle = (status: string) => {
 };
 
 export function TrackedScreen({ items, onSelectItem }: TrackedScreenProps) {
-  const portfolioValue = items.reduce((sum, item) => sum + item.targetPrice, 0);
+  const portfolioValue = items.reduce((sum, item) => sum + effectiveTargetDisplay(item), 0);
 
   return (
     <div className="pt-8 pb-16 px-6 max-w-5xl mx-auto">
@@ -92,7 +93,12 @@ export function TrackedScreen({ items, onSelectItem }: TrackedScreenProps) {
                 </div>
                 <div className="flex flex-col opacity-50">
                   <span className="text-[10px] font-bold tracking-widest text-on-surface-variant uppercase">Target</span>
-                  <span className="text-xl font-medium line-through tracking-tight">${item.targetPrice.toFixed(2)}</span>
+                  <span className="text-xl font-medium line-through tracking-tight">${effectiveTargetDisplay(item).toFixed(2)}</span>
+                  {item.targetMode === 'percent_off' && item.targetPercent != null && item.targetReferencePrice != null && (
+                    <span className="text-[10px] text-on-surface-variant mt-0.5">
+                      {item.targetPercent}% below ${item.targetReferencePrice.toFixed(2)}
+                    </span>
+                  )}
                 </div>
                 <div className="ml-auto flex items-center gap-4">
                   <button className="text-xs font-bold tracking-widest uppercase text-on-surface hover:text-primary transition-colors flex items-center gap-2">

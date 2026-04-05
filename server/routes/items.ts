@@ -19,7 +19,20 @@ router.get('/', async (_req, res) => {
 // POST /api/items
 router.post('/', async (req, res) => {
   try {
-    const { name, description, status, bestPrice, targetPrice, image, updatedAt } = req.body;
+    const {
+      name,
+      description,
+      status,
+      bestPrice,
+      targetPrice,
+      targetMode,
+      targetPercent,
+      targetReferencePrice,
+      image,
+      updatedAt,
+      url,
+      alertEmail,
+    } = req.body;
     const id = randomUUID();
     const [item] = await db.insert(trackedItems).values({
       id,
@@ -28,7 +41,12 @@ router.post('/', async (req, res) => {
       status: status ?? 'Waiting for Deal',
       bestPrice,
       targetPrice,
+      targetMode: targetMode ?? 'absolute',
+      targetPercent: targetPercent ?? null,
+      targetReferencePrice: targetReferencePrice ?? null,
       image: image ?? '',
+      url: url ?? '',
+      alertEmail: alertEmail ?? '',
       updatedAt: updatedAt ?? 'Just now',
     }).returning();
     res.status(201).json(item);

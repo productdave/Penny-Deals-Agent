@@ -7,6 +7,10 @@ export const trackedItems = sqliteTable('tracked_items', {
   status: text('status').notNull().default('Waiting for Deal'),
   bestPrice: real('best_price').notNull(),
   targetPrice: real('target_price').notNull(),
+  /** 'absolute' = targetPrice is the threshold; 'percent_off' = threshold = reference * (1 - percent/100) */
+  targetMode: text('target_mode').notNull().default('absolute'),
+  targetPercent: real('target_percent'),
+  targetReferencePrice: real('target_reference_price'),
   image: text('image').notNull().default(''),
   url: text('url').default(''),
   alertEmail: text('alert_email').default(''),
