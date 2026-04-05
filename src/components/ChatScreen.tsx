@@ -51,7 +51,7 @@ function VerdictBadge({ conclusion, confidence }: { conclusion: string; confiden
 }
 
 // ── Penny message bubble ──────────────────────────────────────────────────────
-function PennyMessage({ msg, onTrack }: { msg: Message; onTrack: () => void }) {
+function PennyMessage({ msg, onTrack, onStepClick }: { msg: Message; onTrack: () => void; onStepClick?: (step: string) => void }) {
   const [showReasoning, setShowReasoning] = useState(false);
   const pr = msg.pennyResponse;
 
@@ -96,15 +96,19 @@ function PennyMessage({ msg, onTrack }: { msg: Message; onTrack: () => void }) {
           </div>
         )}
 
-        {/* Next steps */}
+        {/* Next steps — clickable buttons */}
         {pr?.next_steps && pr.next_steps.length > 0 && (
           <div className="border-t border-outline-variant/10 px-6 py-4 space-y-2">
             <p className="text-[10px] font-bold tracking-widest text-on-surface-variant uppercase mb-2">Next Steps</p>
             {pr.next_steps.map((step, i) => (
-              <div key={i} className="flex items-start gap-2 text-sm text-on-surface">
-                <span className="text-primary font-bold shrink-0">{i + 1}.</span>
+              <button
+                key={i}
+                onClick={() => onStepClick?.(step)}
+                className="w-full flex items-start gap-3 text-sm text-on-surface text-left px-4 py-3 border border-primary/20 hover:border-primary hover:bg-primary/10 active:bg-primary active:text-on-primary transition-all cursor-pointer group"
+              >
+                <span className="text-primary font-bold shrink-0 group-active:text-on-primary">{i + 1}.</span>
                 <span>{step}</span>
-              </div>
+              </button>
             ))}
           </div>
         )}
@@ -268,8 +272,13 @@ export function ChatScreen({
     flowRef.current = 'ASKED_PRICE';
   };
 
-  const handleSend = async () => {
-    const text = inputValue.trim();
+  const handleStepClick = (step: string) => {
+    if (isLoading) return;
+    handleSendWithText(step);
+  };
+
+  const handleSendWithText = async (overrideText?: string) => {
+    const text = (overrideText ?? inputValue).trim();
     if (!text || isLoading) return;
 
     setInputValue('');
@@ -306,6 +315,8 @@ export function ChatScreen({
     }
   };
 
+  const handleSend = () => handleSendWithText();
+
   return (
     <div className="flex flex-col h-full max-w-4xl mx-auto px-4 lg:px-0">
       <div className="flex-1 overflow-y-auto chat-scroll py-8 flex flex-col gap-10">
@@ -319,7 +330,7 @@ export function ChatScreen({
         <div className="flex flex-col gap-6 w-full">
           {messages.map(msg =>
             msg.sender === 'PENNY' ? (
-              <PennyMessage key={msg.id} msg={msg} onTrack={() => handleTrackFromMessage(msg)} />
+              <PennyMessage key={msg.id} msg={msg} onTrack={() => handleTrackFromMessage(msg)} onStepClick={handleStepClick} />
             ) : (
               <div key={msg.id} className="flex flex-col items-end w-full">
                 <div className="flex flex-col items-end max-w-[85%] lg:max-w-[70%]">
