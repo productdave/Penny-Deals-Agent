@@ -1,14 +1,15 @@
-import nodemailer from 'nodemailer';
+import FormData from 'form-data';
+import Mailgun from 'mailgun.js';
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST ?? 'smtp.gmail.com',
-  port: Number(process.env.SMTP_PORT ?? 587),
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
+const mailgun = new Mailgun(FormData);
+const mg = mailgun.client({
+  username: 'api',
+  key: process.env.MAILGUN_API_KEY ?? '',
+  url: process.env.MAILGUN_API_URL ?? 'https://api.mailgun.net',
 });
+
+const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN ?? '';
+const FROM = process.env.MAILGUN_FROM ?? `Penny Intelligence <mailgun@${MAILGUN_DOMAIN}>`;
 
 export interface PriceAlertPayload {
   productName: string;
@@ -45,21 +46,17 @@ export async function sendPriceAlert(payload: PriceAlertPayload) {
 <body style="margin:0;padding:0;background:#131313;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:#f0ead6;">
   <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;padding:40px 24px;">
     <tr><td>
-      <!-- Header -->
       <p style="color:#e9c349;font-size:11px;font-weight:900;letter-spacing:0.3em;text-transform:uppercase;margin:0 0 8px;">Penny Intelligence</p>
       <h1 style="font-size:28px;font-weight:900;color:#f0ead6;margin:0 0 32px;line-height:1.2;">
         ${hitTarget ? '🎯 Target Reached' : '📉 Price Drop Detected'}
       </h1>
 
-      <!-- Product image -->
       ${imageHtml}
 
-      <!-- Product name -->
       <h2 style="font-size:22px;font-weight:900;color:#f0ead6;margin:0 0 24px;border-left:4px solid #e9c349;padding-left:16px;">
         ${productName}
       </h2>
 
-      <!-- Price table -->
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#1e1e1e;padding:24px;margin-bottom:24px;">
         <tr>
           <td style="padding:8px 0;">
@@ -89,7 +86,6 @@ export async function sendPriceAlert(payload: PriceAlertPayload) {
 
       ${ctaHtml}
 
-      <!-- Footer -->
       <p style="color:#555;font-size:11px;margin-top:48px;border-top:1px solid #333;padding-top:16px;letter-spacing:0.1em;">
         PENNY INTELLIGENCE · AI-POWERED SHOPPING CONCIERGE<br/>
         You're receiving this because you're tracking ${productName}.
@@ -99,8 +95,8 @@ export async function sendPriceAlert(payload: PriceAlertPayload) {
 </body>
 </html>`;
 
-  await transporter.sendMail({
-    from: `"Penny Intelligence" <${process.env.SMTP_USER}>`,
+  await mg.messages.create(MAILGUN_DOMAIN, {
+    from: FROM,
     to: toEmail,
     subject,
     html,
