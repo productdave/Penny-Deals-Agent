@@ -1,16 +1,3 @@
-import FormData from 'form-data';
-import Mailgun from 'mailgun.js';
-
-const mailgun = new Mailgun(FormData);
-const mg = mailgun.client({
-  username: 'api',
-  key: process.env.MAILGUN_API_KEY ?? '',
-  url: process.env.MAILGUN_API_URL ?? 'https://api.mailgun.net',
-});
-
-const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN ?? '';
-const FROM = process.env.MAILGUN_FROM ?? `Penny Intelligence <mailgun@${MAILGUN_DOMAIN}>`;
-
 export interface PriceAlertPayload {
   productName: string;
   oldPrice: number;
@@ -24,6 +11,13 @@ export interface PriceAlertPayload {
 
 export async function sendPriceAlert(payload: PriceAlertPayload) {
   const { productName, oldPrice, newPrice, targetPrice, hitTarget, image, url, toEmail } = payload;
+
+  const apiKey = process.env.MAILGUN_API_KEY ?? '';
+  const domain = process.env.MAILGUN_DOMAIN ?? '';
+  const apiUrl = process.env.MAILGUN_API_URL ?? 'https://api.mailgun.net';
+  const from = process.env.MAILGUN_FROM ?? `Penny Intelligence <penny@${domain}>`;
+
+  if (!apiKey || !domain) throw new Error('MAILGUN_API_KEY and MAILGUN_DOMAIN must be set in .env');
 
   const drop = oldPrice - newPrice;
   const dropPct = oldPrice > 0 ? ((drop / oldPrice) * 100).toFixed(1) : '0';
@@ -50,13 +44,10 @@ export async function sendPriceAlert(payload: PriceAlertPayload) {
       <h1 style="font-size:28px;font-weight:900;color:#f0ead6;margin:0 0 32px;line-height:1.2;">
         ${hitTarget ? '🎯 Target Reached' : '📉 Price Drop Detected'}
       </h1>
-
       ${imageHtml}
-
       <h2 style="font-size:22px;font-weight:900;color:#f0ead6;margin:0 0 24px;border-left:4px solid #e9c349;padding-left:16px;">
         ${productName}
       </h2>
-
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#1e1e1e;padding:24px;margin-bottom:24px;">
         <tr>
           <td style="padding:8px 0;">
@@ -78,14 +69,11 @@ export async function sendPriceAlert(payload: PriceAlertPayload) {
           </td>
         </tr>
       </table>
-
       ${hitTarget
         ? `<p style="color:#4caf50;font-size:15px;font-weight:700;margin:0 0 16px;">Your target price has been reached. This is an optimal acquisition window.</p>`
         : `<p style="color:#9e9e9e;font-size:14px;margin:0 0 16px;">Price is now $${(newPrice - targetPrice).toFixed(2)} above your target of $${targetPrice.toFixed(2)}.</p>`
       }
-
       ${ctaHtml}
-
       <p style="color:#555;font-size:11px;margin-top:48px;border-top:1px solid #333;padding-top:16px;letter-spacing:0.1em;">
         PENNY INTELLIGENCE · AI-POWERED SHOPPING CONCIERGE<br/>
         You're receiving this because you're tracking ${productName}.
@@ -95,12 +83,20 @@ export async function sendPriceAlert(payload: PriceAlertPayload) {
 </body>
 </html>`;
 
-  await mg.messages.create(MAILGUN_DOMAIN, {
-    from: FROM,
-    to: toEmail,
-    subject,
-    html,
+  const body = new URLSearchParams({ from, to: toEmail, subject, html });
+  const res = await fetch(`${apiUrl}/v3/${domain}/messages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Basic ' + Buffer.from(`api:${apiKey}`).toString('base64'),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: body.toString(),
   });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Mailgun error ${res.status}: ${text}`);
+  }
 
   console.log(`[mailer] Alert sent to ${toEmail} for ${productName}`);
 }

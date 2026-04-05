@@ -85,11 +85,26 @@ async function lookupCurrentPrice(productName: string, productUrl?: string): Pro
   }
 }
 
-export async function runPriceCheck() {
+export interface PriceCheckResult {
+  name: string;
+  oldPrice: number;
+  newPrice: number | null;
+  targetPrice: number;
+  source: string | null;
+  confidence: string;
+  status: 'price_drop' | 'price_increase' | 'no_change' | 'skipped';
+  hitTarget: boolean;
+  emailSent: boolean;
+  emailError?: string;
+}
+
+export async function runPriceCheck(): Promise<PriceCheckResult[]> {
   console.log('[priceChecker] Starting price check run...');
 
   const items = await db.select().from(trackedItems);
   console.log(`[priceChecker] Checking ${items.length} item(s)`);
+
+  const results: PriceCheckResult[] = [];
 
   for (const item of items) {
     console.log(`[priceChecker] Checking: ${item.name}`);
@@ -98,34 +113,31 @@ export async function runPriceCheck() {
 
     if (newPrice === null || confidence === 'low') {
       console.log(`[priceChecker] Low confidence or no price for "${item.name}", skipping`);
+      results.push({ name: item.name, oldPrice: item.bestPrice, newPrice, targetPrice: item.targetPrice, source, confidence, status: 'skipped', hitTarget: false, emailSent: false });
       continue;
     }
 
     const oldPrice = item.bestPrice;
-    const priceChanged = Math.abs(newPrice - oldPrice) >= 0.01;
+    const diff = newPrice - oldPrice;
+    const priceChanged = Math.abs(diff) >= 0.01;
 
     if (!priceChanged) {
       console.log(`[priceChecker] No change for "${item.name}" ($${newPrice})`);
+      results.push({ name: item.name, oldPrice, newPrice, targetPrice: item.targetPrice, source, confidence, status: 'no_change', hitTarget: newPrice <= item.targetPrice, emailSent: false });
       continue;
     }
 
     console.log(`[priceChecker] Price changed for "${item.name}": $${oldPrice} → $${newPrice} (via ${source})`);
 
-    // Determine new status
     const hitTarget = newPrice <= item.targetPrice;
-    const newStatus = hitTarget ? 'Price Drop!' : newPrice < oldPrice ? 'Price Drop!' : 'Stable';
+    const dropped = newPrice < oldPrice;
+    const newStatus = hitTarget || dropped ? 'Price Drop!' : 'Stable';
     const now = new Date();
 
-    // Update tracked item
     await db.update(trackedItems)
-      .set({
-        bestPrice: newPrice,
-        status: newStatus,
-        updatedAt: `Updated just now`,
-      })
+      .set({ bestPrice: newPrice, status: newStatus, updatedAt: `Updated just now` })
       .where(eq(trackedItems.id, item.id));
 
-    // Record price history
     await db.insert(priceHistory).values({
       itemId: item.id,
       price: newPrice,
@@ -133,9 +145,10 @@ export async function runPriceCheck() {
       recordedAt: now,
     });
 
-    // Send email alert if price dropped
+    let emailSent = false;
+    let emailError: string | undefined;
     const alertEmail = item.alertEmail || process.env.ALERT_EMAIL;
-    if (alertEmail && newPrice < oldPrice) {
+    if (alertEmail && dropped) {
       try {
         await sendPriceAlert({
           productName: item.name,
@@ -147,11 +160,27 @@ export async function runPriceCheck() {
           url: item.url ?? undefined,
           toEmail: alertEmail,
         });
+        emailSent = true;
       } catch (err: any) {
+        emailError = err?.message;
         console.error(`[priceChecker] Failed to send alert for "${item.name}":`, err?.message);
       }
     }
+
+    results.push({
+      name: item.name,
+      oldPrice,
+      newPrice,
+      targetPrice: item.targetPrice,
+      source,
+      confidence,
+      status: dropped ? 'price_drop' : 'price_increase',
+      hitTarget,
+      emailSent,
+      emailError,
+    });
   }
 
   console.log('[priceChecker] Price check run complete');
+  return results;
 }

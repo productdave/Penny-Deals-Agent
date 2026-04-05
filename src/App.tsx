@@ -5,6 +5,7 @@ import { LandingScreen } from './components/LandingScreen';
 import { ChatScreen } from './components/ChatScreen';
 import { ReportScreen } from './components/ReportScreen';
 import { TrackedScreen } from './components/TrackedScreen';
+import { SettingsScreen } from './components/SettingsScreen';
 import { TrackedItem, Message, ChatFlowState } from './types';
 import { fetchItems, createItem, fetchMessages, saveMessage, createChatSession } from './api';
 
@@ -88,6 +89,7 @@ export default function App() {
         )}
         {currentScreen === 'report' && <ReportScreen item={selectedItem} onBack={() => setCurrentScreen('tracked')} />}
         {currentScreen === 'tracked' && <TrackedScreen items={trackedItems} onSelectItem={(item) => { setSelectedItem(item); setCurrentScreen('report'); }} />}
+        {currentScreen === 'settings' && <SettingsScreen />}
       </main>
 
       {currentScreen !== 'landing' && (

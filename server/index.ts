@@ -6,6 +6,7 @@ import itemsRouter from './routes/items';
 import chatRouter from './routes/chat';
 import scrapeRouter from './routes/scrape';
 import { runPriceCheck } from './jobs/priceChecker';
+import { sendPriceAlert } from './jobs/mailer';
 import { mkdirSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -26,13 +27,37 @@ app.use('/api/chat', chatRouter);
 app.use('/api/scrape', scrapeRouter);
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
-// Manual trigger for price check (useful for testing)
+// Manual trigger for price check — waits and returns results
 app.post('/api/jobs/price-check', async (_req, res) => {
   try {
-    res.json({ message: 'Price check started' });
-    await runPriceCheck(); // Run after responding so request doesn't hang
+    const results = await runPriceCheck();
+    res.json({ results });
   } catch (err: any) {
     console.error('[jobs] Price check error:', err?.message);
+    res.status(500).json({ error: err?.message ?? 'Price check failed' });
+  }
+});
+
+// Send a test email to verify Mailgun config
+app.post('/api/jobs/test-email', async (req, res) => {
+  const toEmail = req.body?.email || process.env.ALERT_EMAIL;
+  if (!toEmail) {
+    res.status(400).json({ error: 'No email address. Set ALERT_EMAIL in .env or pass { email } in the request body.' });
+    return;
+  }
+  try {
+    await sendPriceAlert({
+      productName: 'Test Product (Nike Air Max 90)',
+      oldPrice: 130.00,
+      newPrice: 89.99,
+      targetPrice: 100.00,
+      hitTarget: true,
+      toEmail,
+    });
+    res.json({ message: `Test email sent to ${toEmail}` });
+  } catch (err: any) {
+    console.error('[jobs] Test email error:', err?.message);
+    res.status(500).json({ error: err?.message ?? 'Failed to send test email' });
   }
 });
 

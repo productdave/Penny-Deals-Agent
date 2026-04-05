@@ -46,3 +46,36 @@ export async function saveMessage(sessionId: string, message: Omit<Message, 'id'
   if (!res.ok) throw new Error('Failed to save message');
   return res.json();
 }
+
+// --- Jobs ---
+
+export interface PriceCheckResult {
+  name: string;
+  oldPrice: number;
+  newPrice: number | null;
+  targetPrice: number;
+  source: string | null;
+  confidence: string;
+  status: 'price_drop' | 'price_increase' | 'no_change' | 'skipped';
+  hitTarget: boolean;
+  emailSent: boolean;
+  emailError?: string;
+}
+
+export async function triggerPriceCheck(): Promise<PriceCheckResult[]> {
+  const res = await fetch('/api/jobs/price-check', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? 'Price check failed');
+  return data.results;
+}
+
+export async function sendTestEmail(email?: string): Promise<string> {
+  const res = await fetch('/api/jobs/test-email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? 'Failed to send test email');
+  return data.message;
+}
