@@ -1,3 +1,9 @@
+<div align="center">
+
+<img src="assets/readme-cover.png" width="100%" alt="Penny researches products and recommends whether to buy, wait, or track the price" />
+
+</div>
+
 # Penny — AI Shopping Intelligence
 
 Penny is a personal shopping concierge that researches products, compares prices, and gives you a precise **Buy, Wait, or Track** directive. Powered by GPT-4o with live web search.
